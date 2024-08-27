@@ -133,6 +133,8 @@ Simply put, this downloads the file as a temp file, we load it in with `TextFile
 
 Why do we want to support streaming? What about streaming is important, or useful?
 
+It helps reduce the user's wait time until the first token appears, making chatbot apps seem more responsive.
+
 ## On Chat Start:
 
 The next scope is where "the magic happens". On Chat Start is when a user begins a chat session. This will happen whenever a user opens a new chat window, or refreshes an existing chat window.
@@ -174,6 +176,8 @@ Now, we'll save that into our user session!
 ### QUESTION #2: 
 
 Why are we using User Session here? What about Python makes us need to use this? Why not just store everything in a global variable?
+
+It separates a user's info from other users, which is important in order to keep track of conversational context, uploaded documents, and other session-specific information.
 
 ## On Message
 
