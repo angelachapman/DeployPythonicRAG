@@ -1,16 +1,23 @@
 import os
 from typing import List
+import tempfile
+
+import chainlit as cl
 from chainlit.types import AskFileResponse
+from PyPDF2 import PdfReader
+
+from langchain.vectorstores import Qdrant
+from langchain.embeddings import OpenAIEmbeddings
+
 from aimakerspace.text_utils import CharacterTextSplitter, TextFileLoader
 from aimakerspace.openai_utils.prompts import (
     UserRolePrompt,
-    SystemRolePrompt,
-    AssistantRolePrompt,
+    SystemRolePrompt
 )
 from aimakerspace.openai_utils.embedding import EmbeddingModel
 from aimakerspace.vectordatabase import VectorDatabase
 from aimakerspace.openai_utils.chatmodel import ChatOpenAI
-import chainlit as cl
+from aimakerspace.qa_pipeline import RerankedQAPipeline
 
 system_template = """\
 Use the following context to answer a users question. If you cannot find the answer in the context, say you don't know the answer."""
@@ -25,33 +32,10 @@ Question:
 """
 user_role_prompt = UserRolePrompt(user_prompt_template)
 
-class RetrievalAugmentedQAPipeline:
-    def __init__(self, llm: ChatOpenAI(), vector_db_retriever: VectorDatabase) -> None:
-        self.llm = llm
-        self.vector_db_retriever = vector_db_retriever
-
-    async def arun_pipeline(self, user_query: str):
-        context_list = self.vector_db_retriever.search_by_text(user_query, k=4)
-
-        context_prompt = ""
-        for context in context_list:
-            context_prompt += context[0] + "\n"
-
-        formatted_system_prompt = system_role_prompt.create_message()
-
-        formatted_user_prompt = user_role_prompt.create_message(question=user_query, context=context_prompt)
-
-        async def generate_response():
-            async for chunk in self.llm.astream([formatted_system_prompt, formatted_user_prompt]):
-                yield chunk
-
-        return {"response": generate_response(), "context": context_list}
-
 text_splitter = CharacterTextSplitter()
-
+EmbeddingModel = OpenAIEmbeddings()
 
 def process_text_file(file: AskFileResponse):
-    import tempfile
 
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as temp_file:
         temp_file_path = temp_file.name
@@ -64,6 +48,34 @@ def process_text_file(file: AskFileResponse):
     texts = text_splitter.split_texts(documents)
     return texts
 
+def process_pdf(file: AskFileResponse) -> list[str]:
+    
+    # Create a temporary file to store the PDF content
+    with tempfile.NamedTemporaryFile(mode="wb", delete=False, suffix=".pdf") as temp_file:
+        temp_file_path = temp_file.name
+        temp_file.write(file.content)
+
+    # Read the PDF content
+    with open(temp_file_path, "rb") as f:
+        pdf_reader = PdfReader(f)
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text()
+
+    # Assuming you have a text splitter similar to the one used for text files
+    texts = text_splitter.split_texts([text])
+    return texts
+
+# Function to build the vector database from a list of texts
+async def build_qdrant_vector_database(list_of_text: List[str]) -> Qdrant:
+    embeddings = await embedding_model.async_get_embeddings(list_of_text)
+    qdrant = Qdrant.from_texts(
+        texts=list_of_text,
+        embeddings=[embedding.tolist() for embedding in embeddings],
+        embedding=embedding_model,
+        collection_name="vectors"
+    )
+    return qdrant
 
 @cl.on_chat_start
 async def on_chat_start():
@@ -72,9 +84,9 @@ async def on_chat_start():
     # Wait for the user to upload a file
     while files == None:
         files = await cl.AskFileMessage(
-            content="Please upload a Text File file to begin!",
-            accept=["text/plain"],
-            max_size_mb=2,
+            content="Please upload a Text or PDF File file to begin!",
+            accept=["text/plain","application/pdf"],
+            max_size_mb=5,
             timeout=180,
         ).send()
 
@@ -86,20 +98,22 @@ async def on_chat_start():
     await msg.send()
 
     # load the file
-    texts = process_text_file(file)
+    if "pdf" not in file.name.lower():
+        texts = process_text_file(file)
+    else: texts = process_pdf(file)
 
     print(f"Processing {len(texts)} text chunks")
 
     # Create a dict vector store
-    vector_db = VectorDatabase()
-    vector_db = await vector_db.abuild_from_list(texts)
+    qdrant_db = await build_qdrant_vector_database(texts)
     
     chat_openai = ChatOpenAI()
 
     # Create a chain
-    retrieval_augmented_qa_pipeline = RetrievalAugmentedQAPipeline(
-        vector_db_retriever=vector_db,
-        llm=chat_openai
+    retrieval_augmented_qa_pipeline = RerankedQAPipeline(
+        vector_db_retriever=qdrant_db,
+        llm=chat_openai,
+        True
     )
     
     # Let the user know that the system is ready

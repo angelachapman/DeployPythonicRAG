@@ -1,3 +1,6 @@
 numpy
 chainlit==0.7.700
 openai
+rank_bm25
+PyPDF2
+langchain>=0.2
