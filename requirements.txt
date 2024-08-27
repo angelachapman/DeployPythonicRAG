@@ -2,5 +2,8 @@ numpy
 chainlit==0.7.700
 openai
 rank_bm25
-PyPDF2
+pymupdf
 langchain>=0.2
+langchain-community
+tiktoken
+langchain-openai

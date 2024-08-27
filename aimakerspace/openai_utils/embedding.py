@@ -21,6 +21,8 @@ class EmbeddingModel:
         self.embeddings_model_name = embeddings_model_name
 
     async def async_get_embeddings(self, list_of_text: List[str]) -> List[List[float]]:
+        if not list_of_text:
+            raise(ValueError("Cannot embed nonexistent text."))
         embedding_response = await self.async_client.embeddings.create(
             input=list_of_text, model=self.embeddings_model_name
         )
